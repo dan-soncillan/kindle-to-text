@@ -1,0 +1,23 @@
+# Screenshots
+screenshots/
+
+# Output
+output.txt
+*.txt
+!requirements.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
