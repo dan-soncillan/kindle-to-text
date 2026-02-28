@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""kindle-to-text GUI App: ウィンドウ指定キャプチャ + 自動ページめくり + OCR"""
+"""kindle-to-text GUI App: ウィンドウ指定キャプチャ + 自動ページめくり + PDF出力"""
 
 import hashlib
 import subprocess
@@ -137,117 +137,54 @@ def activate_window(app_name: str, window_title: str = "") -> None:
     time.sleep(0.5)
 
 
-def turn_page_by_key(direction: str = "left") -> None:
-    """CGEvent で矢印キーを送信してページめくり（オーバーレイに影響されない）"""
-    # Left arrow: keycode 123, Right arrow: keycode 124
+def turn_page_by_key(direction: str = "left", app_name: str = "") -> None:
+    """矢印キーでページめくり。app_name 指定時はバックグラウンドでも動作。"""
     keycode = 123 if direction == "left" else 124
-    event_down = CGEventCreateKeyboardEvent(None, keycode, True)
-    event_up = CGEventCreateKeyboardEvent(None, keycode, False)
-    CGEventPost(kCGHIDEventTap, event_down)
-    time.sleep(0.05)
-    CGEventPost(kCGHIDEventTap, event_up)
+    if app_name:
+        # AppleScript で特定プロセスにキー送信（フォーカス不要）
+        script = f'''
+        tell application "System Events"
+            tell process "{app_name}"
+                key code {keycode}
+            end tell
+        end tell
+        '''
+        subprocess.run(["osascript", "-e", script], capture_output=True)
+    else:
+        event_down = CGEventCreateKeyboardEvent(None, keycode, True)
+        event_up = CGEventCreateKeyboardEvent(None, keycode, False)
+        CGEventPost(kCGHIDEventTap, event_down)
+        time.sleep(0.05)
+        CGEventPost(kCGHIDEventTap, event_up)
 
 
-def ocr_image(image_path: str, languages: list[str] | None = None, invert: bool = False) -> str:
-    """macOS Vision framework で OCR（ダークモード自動対応）"""
-    import Vision
-    from Foundation import NSURL
-    from Quartz import (
-        CGImageSourceCreateWithURL,
-        CGImageSourceCreateImageAtIndex,
-        CIImage,
-        CIFilter,
-        CIContext,
-    )
+def save_pdf(screenshots_dir: Path, output_path: Path) -> int:
+    """スクリーンショットを1つの PDF にまとめる。ページ数を返す。"""
+    from PIL import Image
 
-    if languages is None:
-        languages = ["ja", "en"]
+    image_files = sorted(screenshots_dir.glob("page_*.png"))
+    if not image_files:
+        return 0
 
-    url = NSURL.fileURLWithPath_(str(image_path))
-    source = CGImageSourceCreateWithURL(url, None)
-    if not source:
-        raise FileNotFoundError(f"画像を読み込めません: {image_path}")
-
-    cg_image = CGImageSourceCreateImageAtIndex(source, 0, None)
-    if not cg_image:
-        raise ValueError(f"画像の作成に失敗: {image_path}")
-
-    def _run_ocr(img):
-        """Vision OCR を実行して文字列を返す"""
-        if img is None:
-            return ""
-        request = Vision.VNRecognizeTextRequest.alloc().init()
-        request.setRecognitionLanguages_(languages)
-        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-        request.setUsesLanguageCorrection_(True)
-        try:
-            request.setRevision_(3)
-        except Exception:
-            pass
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
-            img, None
-        )
-        success, error = handler.performRequests_error_([request], None)
-        if not success:
-            return ""
-        lines = []
-        for obs in request.results():
-            candidates = obs.topCandidates_(1)
-            if candidates:
-                lines.append(candidates[0].string())
-        return "\n".join(lines)
-
-    def _preprocess_dark(img):
-        """ダークモード前処理: グレースケール → 反転 → コントラスト強化"""
-        try:
-            ci = CIImage.imageWithCGImage_(img)
-            if not ci:
-                return None
-
-            # グレースケール化（色味を除去して反転精度を上げる）
-            mono = CIFilter.filterWithName_("CIPhotoEffectMono")
-            if mono:
-                mono.setDefaults()
-                mono.setValue_forKey_(ci, "inputImage")
-                ci = mono.outputImage() or ci
-
-            # 色反転
-            inv = CIFilter.filterWithName_("CIColorInvert")
-            if inv:
-                inv.setDefaults()
-                inv.setValue_forKey_(ci, "inputImage")
-                ci = inv.outputImage() or ci
-
-            # コントラスト強化（背景を白く、文字を黒くする）
-            ctrl = CIFilter.filterWithName_("CIColorControls")
-            if ctrl:
-                ctrl.setDefaults()
-                ctrl.setValue_forKey_(ci, "inputImage")
-                ctrl.setValue_forKey_(2.0, "inputContrast")
-                ctrl.setValue_forKey_(0.1, "inputBrightness")
-                ci = ctrl.outputImage() or ci
-
-            context = CIContext.contextWithOptions_(None)
-            result = context.createCGImage_fromRect_(ci, ci.extent())
-            return result
-        except Exception:
-            return None
-
-    if invert:
-        # 元画像と前処理画像の両方でOCRし、長い方を採用（白/ダーク混在対応）
-        text_normal = _run_ocr(cg_image)
-        processed = _preprocess_dark(cg_image)
-        text_dark = _run_ocr(processed)
-        return text_dark if len(text_dark) > len(text_normal) else text_normal
-
-    return _run_ocr(cg_image)
+    images = [Image.open(p).convert("RGB") for p in image_files]
+    images[0].save(output_path, "PDF", save_all=True, append_images=images[1:])
+    return len(images)
 
 
-def crop_image(image_path: str, crop_top: int = 0, crop_bottom: int = 0) -> None:
-    """画像の上下をクロップ（ブラウザUI除去用）"""
-    if crop_top <= 0 and crop_bottom <= 0:
+def crop_image(
+    image_path: str,
+    crop_top: int = 0,
+    crop_bottom: int = 0,
+    crop_left: int = 0,
+    crop_right: int = 0,
+) -> None:
+    """画像の上下左右をクロップ（ブラウザUI・ナビ矢印除去用）"""
+    if crop_top <= 0 and crop_bottom <= 0 and crop_left <= 0 and crop_right <= 0:
         return
     from Foundation import NSURL
+    import tempfile
+    import shutil
+    import os
 
     url = NSURL.fileURLWithPath_(image_path)
     source = CGImageSourceCreateWithURL(url, None)
@@ -259,17 +196,24 @@ def crop_image(image_path: str, crop_top: int = 0, crop_bottom: int = 0) -> None
 
     w = CGImageGetWidth(cg_image)
     h = CGImageGetHeight(cg_image)
+    new_w = w - crop_left - crop_right
     new_h = h - crop_top - crop_bottom
-    if new_h <= 0:
+    if new_w <= 0 or new_h <= 0:
         return
 
-    rect = CGRectMake(0, crop_top, w, new_h)
+    rect = CGRectMake(crop_left, crop_top, new_w, new_h)
     cropped = CGImageCreateWithImageInRect(cg_image, rect)
 
-    dest = CGImageDestinationCreateWithURL(url, "public.png", 1, None)
+    # 一時ファイルに書いてから置換（同一パスの読み書き競合によるデータ破損を防止）
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
+    os.close(temp_fd)
+    temp_url = NSURL.fileURLWithPath_(temp_path)
+    dest = CGImageDestinationCreateWithURL(temp_url, "public.png", 1, None)
     if dest:
         CGImageDestinationAddImage(dest, cropped, None)
         CGImageDestinationFinalize(dest)
+    del source  # ソースファイルハンドルを解放
+    shutil.move(temp_path, image_path)
 
 
 def images_match(path1: Path, path2: Path) -> bool:
@@ -287,8 +231,8 @@ def images_match(path1: Path, path2: Path) -> bool:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Kindle to Text")
-        self.root.geometry("680x630")
+        self.root.title("Kindle to PDF")
+        self.root.geometry("700x500")
 
         self.running = False
         self.stop_event = threading.Event()
@@ -340,13 +284,16 @@ class App:
         crop_frame.grid(row=row, column=1, columnspan=2, sticky="w", padx=5, pady=3)
         ttk.Label(crop_frame, text="上:").pack(side="left")
         self.crop_top_var = tk.StringVar(value="0")
-        ttk.Entry(crop_frame, textvariable=self.crop_top_var, width=6).pack(side="left")
-        ttk.Label(crop_frame, text="  下:").pack(side="left")
+        ttk.Entry(crop_frame, textvariable=self.crop_top_var, width=5).pack(side="left")
+        ttk.Label(crop_frame, text=" 下:").pack(side="left")
         self.crop_bottom_var = tk.StringVar(value="0")
-        ttk.Entry(crop_frame, textvariable=self.crop_bottom_var, width=6).pack(side="left")
-        ttk.Label(crop_frame, text="ブラウザUI除去用", foreground="gray").pack(
-            side="left", padx=10
-        )
+        ttk.Entry(crop_frame, textvariable=self.crop_bottom_var, width=5).pack(side="left")
+        ttk.Label(crop_frame, text=" 左:").pack(side="left")
+        self.crop_left_var = tk.StringVar(value="0")
+        ttk.Entry(crop_frame, textvariable=self.crop_left_var, width=5).pack(side="left")
+        ttk.Label(crop_frame, text=" 右:").pack(side="left")
+        self.crop_right_var = tk.StringVar(value="0")
+        ttk.Entry(crop_frame, textvariable=self.crop_right_var, width=5).pack(side="left")
 
         row += 1
         ttk.Label(settings, text="ディレイ(秒):").grid(row=row, column=0, sticky="w", pady=3)
@@ -356,19 +303,8 @@ class App:
         )
 
         row += 1
-        ttk.Label(settings, text="OCR言語:").grid(row=row, column=0, sticky="w", pady=3)
-        ocr_frame = ttk.Frame(settings)
-        ocr_frame.grid(row=row, column=1, columnspan=2, sticky="w", padx=5, pady=3)
-        self.lang_var = tk.StringVar(value="ja,en")
-        ttk.Entry(ocr_frame, textvariable=self.lang_var, width=12).pack(side="left")
-        self.invert_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(ocr_frame, text="ダークモード自動対応", variable=self.invert_var).pack(
-            side="left", padx=15
-        )
-
-        row += 1
         ttk.Label(settings, text="出力先:").grid(row=row, column=0, sticky="w", pady=3)
-        self.output_var = tk.StringVar(value="output.txt")
+        self.output_var = tk.StringVar(value="output.pdf")
         ttk.Entry(settings, textvariable=self.output_var).grid(
             row=row, column=1, sticky="ew", padx=5, pady=3
         )
@@ -388,9 +324,6 @@ class App:
         )
         self.stop_btn.pack(side="left", padx=5)
 
-        self.ocr_btn = ttk.Button(buttons, text="OCRのみ", command=self.ocr_only)
-        self.ocr_btn.pack(side="left", padx=5)
-
         # --- Progress ---
         self.progress_var = tk.DoubleVar()
         self.progress = ttk.Progressbar(
@@ -409,8 +342,8 @@ class App:
 
     def _browse_output(self):
         path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text", "*.txt"), ("All", "*.*")],
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
         )
         if path:
             self.output_var.set(path)
@@ -453,11 +386,15 @@ class App:
         if window:
             owner = window["owner"].lower()
             if any(b in owner for b in ("chrome", "safari", "firefox", "arc", "brave", "edge")):
-                self.crop_top_var.set("280")
-                self.crop_bottom_var.set("140")
+                self.crop_top_var.set("180")
+                self.crop_bottom_var.set("100")
+                self.crop_left_var.set("180")
+                self.crop_right_var.set("180")
             else:
                 self.crop_top_var.set("0")
                 self.crop_bottom_var.set("0")
+                self.crop_left_var.set("0")
+                self.crop_right_var.set("0")
 
     def _get_selected_window(self) -> dict | None:
         idx = self.window_combo.current()
@@ -472,7 +409,6 @@ class App:
         state_normal = "normal" if not running else "disabled"
         state_stop = "normal" if running else "disabled"
         self.root.after(0, lambda: self.start_btn.config(state=state_normal))
-        self.root.after(0, lambda: self.ocr_btn.config(state=state_normal))
         self.root.after(0, lambda: self.stop_btn.config(state=state_stop))
 
     # --- Capture ---
@@ -510,15 +446,18 @@ class App:
 
             crop_top = int(self.crop_top_var.get() or 0)
             crop_bottom = int(self.crop_bottom_var.get() or 0)
+            crop_left = int(self.crop_left_var.get() or 0)
+            crop_right = int(self.crop_right_var.get() or 0)
 
             self.log_msg(f"対象: {window['label']}")
             self.log_msg(f"Window ID: {window['id']}")
-            if crop_top > 0 or crop_bottom > 0:
-                self.log_msg(f"クロップ: 上{crop_top}px / 下{crop_bottom}px")
+            if any(v > 0 for v in (crop_top, crop_bottom, crop_left, crop_right)):
+                self.log_msg(f"クロップ: 上{crop_top} 下{crop_bottom} 左{crop_left} 右{crop_right}px")
             self.log_msg("")
 
             # 正しいウィンドウ/タブをアクティベート（Chrome 系はタブ検索付き）
             activate_window(window["owner"], window["name"])
+            self.log_msg("他のアプリに切り替えてもOK（バックグラウンド動作）")
 
             captured = 0
             for i in range(max_pages):
@@ -528,7 +467,7 @@ class App:
 
                 page_path = screenshots_dir / f"page_{i:04d}.png"
                 capture_window(window["id"], str(page_path))
-                crop_image(str(page_path), crop_top, crop_bottom)
+                crop_image(str(page_path), crop_top, crop_bottom, crop_left, crop_right)
                 captured += 1
 
                 # 前ページと比較 → 自動停止
@@ -544,84 +483,30 @@ class App:
                 self.set_status(f"キャプチャ中... {captured} ページ")
 
                 if max_pages < 9999:
-                    self.set_progress((captured / max_pages) * 50)
+                    self.set_progress((captured / max_pages) * 90)
 
                 if i < max_pages - 1:
-                    turn_page_by_key(direction)
+                    turn_page_by_key(direction, app_name=window["owner"])
                     time.sleep(delay)
 
             self.log_msg(f"\nスクリーンショット完了: {captured} ページ")
+            self.set_progress(90)
 
             if captured == 0 or self.stop_event.is_set():
                 return
 
-            # OCR
-            languages = [lang.strip() for lang in self.lang_var.get().split(",")]
-            self._run_ocr(screenshots_dir, languages)
+            # PDF 生成
+            self.set_status("PDF 生成中...")
+            output = Path(self.output_var.get())
+            page_count = save_pdf(screenshots_dir, output)
+            self.set_progress(100)
+            self.log_msg(f"\n完了！ {output} ({page_count} ページ)")
+            self.set_status(f"完了！ {page_count} ページ → {output}")
 
         except Exception as e:
             self.log_msg(f"\nError: {e}")
         finally:
             self._set_running(False)
-
-    # --- OCR ---
-
-    def ocr_only(self):
-        screenshots_dir = Path("screenshots")
-        if not screenshots_dir.exists() or not list(screenshots_dir.glob("page_*.png")):
-            self.log_msg("screenshots/ にファイルがありません。")
-            return
-
-        self.stop_event.clear()
-        self._set_running(True)
-        self.set_progress(0)
-
-        languages = [lang.strip() for lang in self.lang_var.get().split(",")]
-        thread = threading.Thread(
-            target=self._ocr_worker, args=(screenshots_dir, languages), daemon=True
-        )
-        thread.start()
-
-    def _ocr_worker(self, screenshots_dir: Path, languages: list[str]):
-        try:
-            self._run_ocr(screenshots_dir, languages)
-        except Exception as e:
-            self.log_msg(f"\nError: {e}")
-        finally:
-            self._set_running(False)
-
-    def _run_ocr(self, screenshots_dir: Path, languages: list[str]):
-        image_files = sorted(screenshots_dir.glob("page_*.png"))
-        if not image_files:
-            self.log_msg("OCR対象のファイルがありません。")
-            return
-
-        invert = self.invert_var.get()
-        total = len(image_files)
-        self.log_msg(f"\nOCR処理中... ({total} ページ{', ダークモード自動対応' if invert else ''})")
-        self.set_status("OCR処理中...")
-
-        all_text = []
-        for i, path in enumerate(image_files):
-            if self.stop_event.is_set():
-                self.log_msg("\nOCR停止。")
-                break
-
-            text = ocr_image(str(path), languages, invert=invert)
-            chars = len(text)
-            self.log_msg(f"  [{i + 1}/{total}] {path.name} → {chars} 文字")
-            all_text.append(text)
-            self.set_progress(50 + ((i + 1) / total) * 50)
-
-        if not all_text:
-            return
-
-        output = Path(self.output_var.get())
-        output.write_text("\n\n---\n\n".join(all_text), encoding="utf-8")
-        total_chars = sum(len(t) for t in all_text)
-        self.log_msg(f"\n完了！ {output} ({len(all_text)} ページ, {total_chars:,} 文字)")
-        self.set_status(f"完了！ {len(all_text)} ページ, {total_chars:,} 文字")
-        self.set_progress(100)
 
 
 def main():
