@@ -18,6 +18,15 @@ from Quartz import (
     kCGEventLeftMouseDown,
     kCGEventLeftMouseUp,
     kCGHIDEventTap,
+    CGImageSourceCreateWithURL,
+    CGImageSourceCreateImageAtIndex,
+    CGImageCreateWithImageInRect,
+    CGImageGetWidth,
+    CGImageGetHeight,
+    CGRectMake,
+    CGImageDestinationCreateWithURL,
+    CGImageDestinationAddImage,
+    CGImageDestinationFinalize,
 )
 
 
@@ -155,6 +164,35 @@ def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
     return "\n".join(lines)
 
 
+def crop_image_top(image_path: str, crop_top: int) -> None:
+    """画像の上部をクロップ（ブラウザUI除去用）"""
+    if crop_top <= 0:
+        return
+    from Foundation import NSURL
+
+    url = NSURL.fileURLWithPath_(image_path)
+    source = CGImageSourceCreateWithURL(url, None)
+    if not source:
+        return
+    cg_image = CGImageSourceCreateImageAtIndex(source, 0, None)
+    if not cg_image:
+        return
+
+    w = CGImageGetWidth(cg_image)
+    h = CGImageGetHeight(cg_image)
+    new_h = h - crop_top
+    if new_h <= 0:
+        return
+
+    rect = CGRectMake(0, crop_top, w, new_h)
+    cropped = CGImageCreateWithImageInRect(cg_image, rect)
+
+    dest = CGImageDestinationCreateWithURL(url, "public.png", 1, None)
+    if dest:
+        CGImageDestinationAddImage(dest, cropped, None)
+        CGImageDestinationFinalize(dest)
+
+
 def images_match(path1: Path, path2: Path) -> bool:
     """2つの画像が同一かハッシュで比較"""
     return (
@@ -171,7 +209,7 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Kindle to Text")
-        self.root.geometry("680x580")
+        self.root.geometry("680x620")
 
         self.running = False
         self.stop_event = threading.Event()
@@ -193,6 +231,7 @@ class App:
             settings, textvariable=self.window_var, state="readonly"
         )
         self.window_combo.grid(row=row, column=1, sticky="ew", padx=5, pady=3)
+        self.window_combo.bind("<<ComboboxSelected>>", self._on_window_selected)
         ttk.Button(settings, text="更新", width=6, command=self.refresh_windows).grid(
             row=row, column=2, pady=3
         )
@@ -215,6 +254,16 @@ class App:
             values=["← 左 (日本語/縦書き)", "→ 右 (英語/横書き)"],
         )
         direction_combo.grid(row=row, column=1, sticky="w", padx=5, pady=3)
+
+        row += 1
+        ttk.Label(settings, text="上部クロップ(px):").grid(row=row, column=0, sticky="w", pady=3)
+        crop_frame = ttk.Frame(settings)
+        crop_frame.grid(row=row, column=1, columnspan=2, sticky="w", padx=5, pady=3)
+        self.crop_var = tk.StringVar(value="0")
+        ttk.Entry(crop_frame, textvariable=self.crop_var, width=10).pack(side="left")
+        ttk.Label(crop_frame, text="ブラウザUI除去用", foreground="gray").pack(
+            side="left", padx=10
+        )
 
         row += 1
         ttk.Label(settings, text="ディレイ(秒):").grid(row=row, column=0, sticky="w", pady=3)
@@ -310,6 +359,16 @@ class App:
                     break
             else:
                 self.window_combo.current(0)
+            self._on_window_selected()
+
+    def _on_window_selected(self, event=None):
+        window = self._get_selected_window()
+        if window:
+            owner = window["owner"].lower()
+            if any(b in owner for b in ("chrome", "safari", "firefox", "arc", "brave", "edge")):
+                self.crop_var.set("220")
+            else:
+                self.crop_var.set("0")
 
     def _get_selected_window(self) -> dict | None:
         idx = self.window_combo.current()
@@ -360,8 +419,12 @@ class App:
             delay = float(self.delay_var.get())
             direction = "left" if "左" in self.direction_var.get() else "right"
 
+            crop_top = int(self.crop_var.get() or 0)
+
             self.log_msg(f"対象: {window['label']}")
             self.log_msg(f"Window ID: {window['id']}")
+            if crop_top > 0:
+                self.log_msg(f"上部クロップ: {crop_top}px")
             self.log_msg("")
 
             captured = 0
@@ -372,6 +435,7 @@ class App:
 
                 page_path = screenshots_dir / f"page_{i:04d}.png"
                 capture_window(window["id"], str(page_path))
+                crop_image_top(str(page_path), crop_top)
                 captured += 1
 
                 # 前ページと比較 → 自動停止
