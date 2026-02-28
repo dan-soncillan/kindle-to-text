@@ -106,9 +106,33 @@ def click_at(x: float, y: float) -> None:
     CGEventPost(kCGHIDEventTap, event_up)
 
 
-def activate_app(app_name: str) -> None:
-    """アプリを前面に持ってくる"""
-    script = f'tell application "System Events" to set frontmost of process "{app_name}" to true'
+def _is_browser(app_name: str) -> bool:
+    """Chrome 系ブラウザかどうか判定"""
+    return any(k in app_name.lower() for k in ("chrome", "brave", "edge", "chromium"))
+
+
+def activate_window(app_name: str, window_title: str = "") -> None:
+    """アプリを前面に持ってくる。Chrome 系はタブタイトルで検索してアクティブにする。"""
+    if window_title and _is_browser(app_name):
+        # Chrome 系: タブタイトルで検索して正しいタブ＋ウィンドウをアクティベート
+        escaped_title = window_title.replace('"', '\\"')
+        script = f'''
+        tell application "{app_name}"
+            activate
+            repeat with w in windows
+                set tabList to tabs of w
+                repeat with i from 1 to count of tabList
+                    if title of item i of tabList contains "{escaped_title}" then
+                        set active tab index of w to i
+                        set index of w to 1
+                        return
+                    end if
+                end repeat
+            end repeat
+        end tell
+        '''
+    else:
+        script = f'tell application "System Events" to set frontmost of process "{app_name}" to true'
     subprocess.run(["osascript", "-e", script], capture_output=True)
     time.sleep(0.5)
 
@@ -125,7 +149,7 @@ def turn_page_by_key(direction: str = "left") -> None:
 
 
 def ocr_image(image_path: str, languages: list[str] | None = None, invert: bool = False) -> str:
-    """macOS Vision framework で OCR"""
+    """macOS Vision framework で OCR（ダークモード自動対応）"""
     import Vision
     from Foundation import NSURL
     from Quartz import (
@@ -148,39 +172,75 @@ def ocr_image(image_path: str, languages: list[str] | None = None, invert: bool 
     if not cg_image:
         raise ValueError(f"画像の作成に失敗: {image_path}")
 
-    # ダークモード: 色反転で OCR 精度を大幅改善
+    def _run_ocr(img):
+        """Vision OCR を実行して文字列を返す"""
+        if img is None:
+            return ""
+        request = Vision.VNRecognizeTextRequest.alloc().init()
+        request.setRecognitionLanguages_(languages)
+        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        request.setUsesLanguageCorrection_(True)
+        try:
+            request.setRevision_(3)
+        except Exception:
+            pass
+        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
+            img, None
+        )
+        success, error = handler.performRequests_error_([request], None)
+        if not success:
+            return ""
+        lines = []
+        for obs in request.results():
+            candidates = obs.topCandidates_(1)
+            if candidates:
+                lines.append(candidates[0].string())
+        return "\n".join(lines)
+
+    def _preprocess_dark(img):
+        """ダークモード前処理: グレースケール → 反転 → コントラスト強化"""
+        try:
+            ci = CIImage.imageWithCGImage_(img)
+            if not ci:
+                return None
+
+            # グレースケール化（色味を除去して反転精度を上げる）
+            mono = CIFilter.filterWithName_("CIPhotoEffectMono")
+            if mono:
+                mono.setDefaults()
+                mono.setValue_forKey_(ci, "inputImage")
+                ci = mono.outputImage() or ci
+
+            # 色反転
+            inv = CIFilter.filterWithName_("CIColorInvert")
+            if inv:
+                inv.setDefaults()
+                inv.setValue_forKey_(ci, "inputImage")
+                ci = inv.outputImage() or ci
+
+            # コントラスト強化（背景を白く、文字を黒くする）
+            ctrl = CIFilter.filterWithName_("CIColorControls")
+            if ctrl:
+                ctrl.setDefaults()
+                ctrl.setValue_forKey_(ci, "inputImage")
+                ctrl.setValue_forKey_(2.0, "inputContrast")
+                ctrl.setValue_forKey_(0.1, "inputBrightness")
+                ci = ctrl.outputImage() or ci
+
+            context = CIContext.contextWithOptions_(None)
+            result = context.createCGImage_fromRect_(ci, ci.extent())
+            return result
+        except Exception:
+            return None
+
     if invert:
-        ci_image = CIImage.imageWithCGImage_(cg_image)
-        invert_filter = CIFilter.filterWithName_("CIColorInvert")
-        invert_filter.setDefaults()
-        invert_filter.setValue_forKey_(ci_image, "inputImage")
-        output = invert_filter.outputImage()
-        context = CIContext.contextWithOptions_(None)
-        cg_image = context.createCGImage_fromRect_(output, output.extent())
+        # 元画像と前処理画像の両方でOCRし、長い方を採用（白/ダーク混在対応）
+        text_normal = _run_ocr(cg_image)
+        processed = _preprocess_dark(cg_image)
+        text_dark = _run_ocr(processed)
+        return text_dark if len(text_dark) > len(text_normal) else text_normal
 
-    request = Vision.VNRecognizeTextRequest.alloc().init()
-    request.setRecognitionLanguages_(languages)
-    request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-    request.setUsesLanguageCorrection_(True)
-    # revision 3 (macOS 14+): 縦書き日本語の認識精度向上
-    try:
-        request.setRevision_(3)
-    except Exception:
-        pass  # 古い macOS では revision 3 がない
-
-    handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
-        cg_image, None
-    )
-    success, error = handler.performRequests_error_([request], None)
-    if not success:
-        raise RuntimeError(f"OCR失敗: {error}")
-
-    lines = []
-    for obs in request.results():
-        candidates = obs.topCandidates_(1)
-        if candidates:
-            lines.append(candidates[0].string())
-    return "\n".join(lines)
+    return _run_ocr(cg_image)
 
 
 def crop_image(image_path: str, crop_top: int = 0, crop_bottom: int = 0) -> None:
@@ -302,7 +362,7 @@ class App:
         self.lang_var = tk.StringVar(value="ja,en")
         ttk.Entry(ocr_frame, textvariable=self.lang_var, width=12).pack(side="left")
         self.invert_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(ocr_frame, text="ダークモード（色反転）", variable=self.invert_var).pack(
+        ttk.Checkbutton(ocr_frame, text="ダークモード自動対応", variable=self.invert_var).pack(
             side="left", padx=15
         )
 
@@ -457,8 +517,8 @@ class App:
                 self.log_msg(f"クロップ: 上{crop_top}px / 下{crop_bottom}px")
             self.log_msg("")
 
-            # Chrome を1回だけアクティベート（毎回やるとオーバーレイ表示でめくり失敗）
-            activate_app(window["owner"])
+            # 正しいウィンドウ/タブをアクティベート（Chrome 系はタブ検索付き）
+            activate_window(window["owner"], window["name"])
 
             captured = 0
             for i in range(max_pages):
@@ -538,7 +598,7 @@ class App:
 
         invert = self.invert_var.get()
         total = len(image_files)
-        self.log_msg(f"\nOCR処理中... ({total} ページ{', 色反転' if invert else ''})")
+        self.log_msg(f"\nOCR処理中... ({total} ページ{', ダークモード自動対応' if invert else ''})")
         self.set_status("OCR処理中...")
 
         all_text = []
@@ -547,8 +607,9 @@ class App:
                 self.log_msg("\nOCR停止。")
                 break
 
-            self.log_msg(f"  [{i + 1}/{total}] {path.name}")
             text = ocr_image(str(path), languages, invert=invert)
+            chars = len(text)
+            self.log_msg(f"  [{i + 1}/{total}] {path.name} → {chars} 文字")
             all_text.append(text)
             self.set_progress(50 + ((i + 1) / total) * 50)
 
