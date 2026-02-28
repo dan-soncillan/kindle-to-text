@@ -52,15 +52,17 @@ def capture_window(window_id: int, output_path: str) -> None:
 
 
 def send_key_to_app(app_name: str, key_code: int = 124) -> None:
-    """アプリをアクティベートしてキーイベント送信（確実にブラウザに届く）"""
-    script = (
-        'tell application "System Events"\n'
-        f'  set frontmost of process "{app_name}" to true\n'
-        f"  delay 0.15\n"
-        f"  key code {key_code}\n"
-        "end tell"
-    )
-    subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
+    """アプリをアクティベートしてキーイベント送信"""
+    import pyautogui
+
+    # アプリを前面に持ってくる
+    script = f'tell application "System Events" to set frontmost of process "{app_name}" to true'
+    subprocess.run(["osascript", "-e", script], capture_output=True)
+    time.sleep(0.3)
+
+    # pyautogui でキー送信（frontmost アプリに届く）
+    key_name = "left" if key_code == 123 else "right"
+    pyautogui.press(key_name)
 
 
 def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
