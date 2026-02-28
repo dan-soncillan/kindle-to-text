@@ -32,12 +32,14 @@ def get_visible_windows() -> list[dict]:
         owner = w.get("kCGWindowOwnerName", "")
         wid = w.get("kCGWindowNumber", 0)
         layer = w.get("kCGWindowLayer", 0)
+        bounds = w.get("kCGWindowBounds", {})
         if layer == 0 and name and owner and wid not in seen:
             seen.add(wid)
             result.append({
                 "id": wid,
                 "name": name,
                 "owner": owner,
+                "bounds": bounds,
                 "label": f"{owner} — {name}",
             })
     return result
@@ -51,8 +53,8 @@ def capture_window(window_id: int, output_path: str) -> None:
     )
 
 
-def send_key_to_app(app_name: str, key_code: int = 124) -> None:
-    """アプリをアクティベートしてキーイベント送信"""
+def turn_page_by_click(app_name: str, bounds: dict, direction: str = "left") -> None:
+    """アプリをアクティベートしてページめくり領域をクリック"""
     import pyautogui
 
     # アプリを前面に持ってくる
@@ -60,9 +62,20 @@ def send_key_to_app(app_name: str, key_code: int = 124) -> None:
     subprocess.run(["osascript", "-e", script], capture_output=True)
     time.sleep(0.3)
 
-    # pyautogui でキー送信（frontmost アプリに届く）
-    key_name = "left" if key_code == 123 else "right"
-    pyautogui.press(key_name)
+    # ウィンドウ座標からクリック位置を計算
+    x = int(bounds.get("X", 0))
+    y = int(bounds.get("Y", 0))
+    w = int(bounds.get("Width", 1000))
+    h = int(bounds.get("Height", 800))
+
+    if direction == "left":
+        # 左端の7%、縦中央をクリック（Kindle の左ナビ領域）
+        click_x = x + int(w * 0.07)
+    else:
+        click_x = x + int(w * 0.93)
+    click_y = y + int(h * 0.5)
+
+    pyautogui.click(click_x, click_y)
 
 
 def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
@@ -305,7 +318,7 @@ class App:
             pages_text = self.pages_var.get().strip()
             max_pages = int(pages_text) if pages_text else 9999
             delay = float(self.delay_var.get())
-            key_code = 123 if "左" in self.direction_var.get() else 124  # 123=左, 124=右
+            direction = "left" if "左" in self.direction_var.get() else "right"
 
             self.log_msg(f"対象: {window['label']}")
             self.log_msg(f"Window ID: {window['id']}")
@@ -337,7 +350,7 @@ class App:
                     self.set_progress((captured / max_pages) * 50)
 
                 if i < max_pages - 1:
-                    send_key_to_app(window["owner"], key_code=key_code)
+                    turn_page_by_click(window["owner"], window["bounds"], direction)
                     time.sleep(delay)
 
             self.log_msg(f"\nスクリーンショット完了: {captured} ページ")
