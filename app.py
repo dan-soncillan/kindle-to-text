@@ -105,14 +105,15 @@ def click_at(x: float, y: float) -> None:
     CGEventPost(kCGHIDEventTap, event_up)
 
 
-def turn_page_by_click(app_name: str, bounds: dict, direction: str = "left") -> None:
-    """アプリをアクティベートしてページめくり領域をクリック"""
-    # アプリを前面に持ってくる
+def activate_app(app_name: str) -> None:
+    """アプリを前面に持ってくる"""
     script = f'tell application "System Events" to set frontmost of process "{app_name}" to true'
     subprocess.run(["osascript", "-e", script], capture_output=True)
-    time.sleep(0.3)
+    time.sleep(0.5)
 
-    # ウィンドウ座標からクリック位置を計算
+
+def turn_page_by_click(bounds: dict, direction: str = "left") -> None:
+    """ページめくり領域をクリック（アプリは既にアクティブ前提）"""
     x = int(bounds.get("X", 0))
     y = int(bounds.get("Y", 0))
     w = int(bounds.get("Width", 1000))
@@ -440,6 +441,9 @@ class App:
                 self.log_msg(f"クロップ: 上{crop_top}px / 下{crop_bottom}px")
             self.log_msg("")
 
+            # Chrome を1回だけアクティベート（毎回やるとオーバーレイ表示でめくり失敗）
+            activate_app(window["owner"])
+
             captured = 0
             for i in range(max_pages):
                 if self.stop_event.is_set():
@@ -467,7 +471,7 @@ class App:
                     self.set_progress((captured / max_pages) * 50)
 
                 if i < max_pages - 1:
-                    turn_page_by_click(window["owner"], window["bounds"], direction)
+                    turn_page_by_click(window["bounds"], direction)
                     time.sleep(delay)
 
             self.log_msg(f"\nスクリーンショット完了: {captured} ページ")
