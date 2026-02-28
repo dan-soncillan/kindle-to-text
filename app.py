@@ -128,11 +128,17 @@ def turn_page_by_click(bounds: dict, direction: str = "left") -> None:
     click_at(click_x, click_y)
 
 
-def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
+def ocr_image(image_path: str, languages: list[str] | None = None, invert: bool = False) -> str:
     """macOS Vision framework で OCR"""
     import Vision
     from Foundation import NSURL
-    from Quartz import CGImageSourceCreateWithURL, CGImageSourceCreateImageAtIndex
+    from Quartz import (
+        CGImageSourceCreateWithURL,
+        CGImageSourceCreateImageAtIndex,
+        CIImage,
+        CIFilter,
+        CIContext,
+    )
 
     if languages is None:
         languages = ["ja", "en"]
@@ -145,6 +151,16 @@ def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
     cg_image = CGImageSourceCreateImageAtIndex(source, 0, None)
     if not cg_image:
         raise ValueError(f"画像の作成に失敗: {image_path}")
+
+    # ダークモード: 色反転で OCR 精度を大幅改善
+    if invert:
+        ci_image = CIImage.imageWithCGImage_(cg_image)
+        invert_filter = CIFilter.filterWithName_("CIColorInvert")
+        invert_filter.setDefaults()
+        invert_filter.setValue_forKey_(ci_image, "inputImage")
+        output = invert_filter.outputImage()
+        context = CIContext.contextWithOptions_(None)
+        cg_image = context.createCGImage_fromRect_(output, output.extent())
 
     request = Vision.VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLanguages_(languages)
@@ -285,9 +301,13 @@ class App:
 
         row += 1
         ttk.Label(settings, text="OCR言語:").grid(row=row, column=0, sticky="w", pady=3)
+        ocr_frame = ttk.Frame(settings)
+        ocr_frame.grid(row=row, column=1, columnspan=2, sticky="w", padx=5, pady=3)
         self.lang_var = tk.StringVar(value="ja,en")
-        ttk.Entry(settings, textvariable=self.lang_var, width=20).grid(
-            row=row, column=1, sticky="w", padx=5, pady=3
+        ttk.Entry(ocr_frame, textvariable=self.lang_var, width=12).pack(side="left")
+        self.invert_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ocr_frame, text="ダークモード（色反転）", variable=self.invert_var).pack(
+            side="left", padx=15
         )
 
         row += 1
@@ -520,8 +540,9 @@ class App:
             self.log_msg("OCR対象のファイルがありません。")
             return
 
+        invert = self.invert_var.get()
         total = len(image_files)
-        self.log_msg(f"\nOCR処理中... ({total} ページ)")
+        self.log_msg(f"\nOCR処理中... ({total} ページ{', 色反転' if invert else ''})")
         self.set_status("OCR処理中...")
 
         all_text = []
@@ -531,7 +552,7 @@ class App:
                 break
 
             self.log_msg(f"  [{i + 1}/{total}] {path.name}")
-            text = ocr_image(str(path), languages)
+            text = ocr_image(str(path), languages, invert=invert)
             all_text.append(text)
             self.set_progress(50 + ((i + 1) / total) * 50)
 
