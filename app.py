@@ -164,9 +164,9 @@ def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
     return "\n".join(lines)
 
 
-def crop_image_top(image_path: str, crop_top: int) -> None:
-    """画像の上部をクロップ（ブラウザUI除去用）"""
-    if crop_top <= 0:
+def crop_image(image_path: str, crop_top: int = 0, crop_bottom: int = 0) -> None:
+    """画像の上下をクロップ（ブラウザUI除去用）"""
+    if crop_top <= 0 and crop_bottom <= 0:
         return
     from Foundation import NSURL
 
@@ -180,7 +180,7 @@ def crop_image_top(image_path: str, crop_top: int) -> None:
 
     w = CGImageGetWidth(cg_image)
     h = CGImageGetHeight(cg_image)
-    new_h = h - crop_top
+    new_h = h - crop_top - crop_bottom
     if new_h <= 0:
         return
 
@@ -209,7 +209,7 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Kindle to Text")
-        self.root.geometry("680x620")
+        self.root.geometry("680x630")
 
         self.running = False
         self.stop_event = threading.Event()
@@ -256,11 +256,15 @@ class App:
         direction_combo.grid(row=row, column=1, sticky="w", padx=5, pady=3)
 
         row += 1
-        ttk.Label(settings, text="上部クロップ(px):").grid(row=row, column=0, sticky="w", pady=3)
+        ttk.Label(settings, text="クロップ(px):").grid(row=row, column=0, sticky="w", pady=3)
         crop_frame = ttk.Frame(settings)
         crop_frame.grid(row=row, column=1, columnspan=2, sticky="w", padx=5, pady=3)
-        self.crop_var = tk.StringVar(value="0")
-        ttk.Entry(crop_frame, textvariable=self.crop_var, width=10).pack(side="left")
+        ttk.Label(crop_frame, text="上:").pack(side="left")
+        self.crop_top_var = tk.StringVar(value="0")
+        ttk.Entry(crop_frame, textvariable=self.crop_top_var, width=6).pack(side="left")
+        ttk.Label(crop_frame, text="  下:").pack(side="left")
+        self.crop_bottom_var = tk.StringVar(value="0")
+        ttk.Entry(crop_frame, textvariable=self.crop_bottom_var, width=6).pack(side="left")
         ttk.Label(crop_frame, text="ブラウザUI除去用", foreground="gray").pack(
             side="left", padx=10
         )
@@ -366,9 +370,11 @@ class App:
         if window:
             owner = window["owner"].lower()
             if any(b in owner for b in ("chrome", "safari", "firefox", "arc", "brave", "edge")):
-                self.crop_var.set("220")
+                self.crop_top_var.set("280")
+                self.crop_bottom_var.set("140")
             else:
-                self.crop_var.set("0")
+                self.crop_top_var.set("0")
+                self.crop_bottom_var.set("0")
 
     def _get_selected_window(self) -> dict | None:
         idx = self.window_combo.current()
@@ -419,12 +425,13 @@ class App:
             delay = float(self.delay_var.get())
             direction = "left" if "左" in self.direction_var.get() else "right"
 
-            crop_top = int(self.crop_var.get() or 0)
+            crop_top = int(self.crop_top_var.get() or 0)
+            crop_bottom = int(self.crop_bottom_var.get() or 0)
 
             self.log_msg(f"対象: {window['label']}")
             self.log_msg(f"Window ID: {window['id']}")
-            if crop_top > 0:
-                self.log_msg(f"上部クロップ: {crop_top}px")
+            if crop_top > 0 or crop_bottom > 0:
+                self.log_msg(f"クロップ: 上{crop_top}px / 下{crop_bottom}px")
             self.log_msg("")
 
             captured = 0
@@ -435,7 +442,7 @@ class App:
 
                 page_path = screenshots_dir / f"page_{i:04d}.png"
                 capture_window(window["id"], str(page_path))
-                crop_image_top(str(page_path), crop_top)
+                crop_image(str(page_path), crop_top, crop_bottom)
                 captured += 1
 
                 # 前ページと比較 → 自動停止
