@@ -27,20 +27,26 @@ def get_visible_windows() -> list[dict]:
     )
     result = []
     seen = set()
+    skip_owners = {"Window Server", "Dock", "SystemUIServer", "Control Center", "Spotlight"}
     for w in windows:
-        name = w.get("kCGWindowName", "")
-        owner = w.get("kCGWindowOwnerName", "")
+        name = w.get("kCGWindowName", "") or ""
+        owner = w.get("kCGWindowOwnerName", "") or ""
         wid = w.get("kCGWindowNumber", 0)
         layer = w.get("kCGWindowLayer", 0)
         bounds = w.get("kCGWindowBounds", {})
-        if layer == 0 and name and owner and wid not in seen:
+        width = int(bounds.get("Width", 0))
+        height = int(bounds.get("Height", 0))
+
+        # メインウィンドウ: layer 0, オーナーあり, 最小サイズ以上
+        if layer == 0 and owner and owner not in skip_owners and width > 100 and height > 100 and wid not in seen:
             seen.add(wid)
+            label = f"{owner} — {name}" if name else owner
             result.append({
                 "id": wid,
                 "name": name,
                 "owner": owner,
                 "bounds": bounds,
-                "label": f"{owner} — {name}",
+                "label": label,
             })
     return result
 
