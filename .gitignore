@@ -2,6 +2,7 @@
 screenshots/
 
 # Output
+output.pdf
 output.txt
 *.txt
 !requirements.txt

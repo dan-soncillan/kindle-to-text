@@ -5,4 +5,4 @@ export TCL_LIBRARY="/Users/dan.nagao/.local/share/uv/python/cpython-3.13.12-maco
 export TK_LIBRARY="/Users/dan.nagao/.local/share/uv/python/cpython-3.13.12-macos-aarch64-none/lib/tk9.0"
 
 cd /Users/dan.nagao/kindle-to-text
-exec /Users/dan.nagao/.local/bin/uv run app.py 2>/tmp/kindle_to_text.log
+exec /Users/dan.nagao/.local/bin/uv run app.py 2>/tmp/kindle_to_pdf.log

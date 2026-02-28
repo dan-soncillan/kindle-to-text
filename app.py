@@ -385,16 +385,10 @@ class App:
         window = self._get_selected_window()
         if window:
             owner = window["owner"].lower()
-            if any(b in owner for b in ("chrome", "safari", "firefox", "arc", "brave", "edge")):
-                self.crop_top_var.set("180")
-                self.crop_bottom_var.set("100")
-                self.crop_left_var.set("180")
-                self.crop_right_var.set("180")
-            else:
-                self.crop_top_var.set("0")
-                self.crop_bottom_var.set("0")
-                self.crop_left_var.set("0")
-                self.crop_right_var.set("0")
+            self.crop_top_var.set("0")
+            self.crop_bottom_var.set("0")
+            self.crop_left_var.set("0")
+            self.crop_right_var.set("0")
 
     def _get_selected_window(self) -> dict | None:
         idx = self.window_combo.current()
