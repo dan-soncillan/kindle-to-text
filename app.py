@@ -153,6 +153,15 @@ class App:
         )
 
         row += 1
+        ttk.Label(settings, text="めくり方向:").grid(row=row, column=0, sticky="w", pady=3)
+        self.direction_var = tk.StringVar(value="← 左 (日本語/縦書き)")
+        direction_combo = ttk.Combobox(
+            settings, textvariable=self.direction_var, state="readonly", width=25,
+            values=["← 左 (日本語/縦書き)", "→ 右 (英語/横書き)"],
+        )
+        direction_combo.grid(row=row, column=1, sticky="w", padx=5, pady=3)
+
+        row += 1
         ttk.Label(settings, text="ディレイ(秒):").grid(row=row, column=0, sticky="w", pady=3)
         self.delay_var = tk.StringVar(value="1.5")
         ttk.Entry(settings, textvariable=self.delay_var, width=10).grid(
@@ -290,7 +299,7 @@ class App:
             pages_text = self.pages_var.get().strip()
             max_pages = int(pages_text) if pages_text else 9999
             delay = float(self.delay_var.get())
-            skip_ocr = False
+            key_code = 123 if "左" in self.direction_var.get() else 124  # 123=左, 124=右
 
             self.log_msg(f"対象: {window['label']}")
             self.log_msg(f"Window ID: {window['id']}")
@@ -322,7 +331,7 @@ class App:
                     self.set_progress((captured / max_pages) * 50)
 
                 if i < max_pages - 1:
-                    send_key_to_app(window["owner"])
+                    send_key_to_app(window["owner"], key_code=key_code)
                     time.sleep(delay)
 
             self.log_msg(f"\nスクリーンショット完了: {captured} ページ")

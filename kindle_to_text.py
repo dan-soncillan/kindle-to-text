@@ -70,11 +70,11 @@ def images_match(path1: Path, path2: Path) -> bool:
     )
 
 
-def turn_page() -> None:
-    """右矢印キーでページめくり"""
+def turn_page(direction: str = "left") -> None:
+    """矢印キーでページめくり（日本語縦書き=left, 英語横書き=right）"""
     import pyautogui
 
-    pyautogui.press("right")
+    pyautogui.press(direction)
 
 
 def countdown(seconds: int) -> None:
@@ -125,7 +125,7 @@ def run_capture(args: argparse.Namespace) -> int:
         print(f"  [{captured}/{max_pages if args.pages else '?'}] {page_path.name}", flush=True)
 
         if i < max_pages - 1:
-            turn_page()
+            turn_page(args.direction)
             time.sleep(args.delay)
 
     print(f"\n✅ スクリーンショット完了: {screenshots_dir}/ ({captured} ページ)")
@@ -181,6 +181,7 @@ def main() -> None:
     parser.add_argument("--lang", default="ja,en", help="OCR言語 (default: ja,en)")
     parser.add_argument("--countdown", type=int, default=5, help="開始前カウントダウン秒数 (default: 5)")
     parser.add_argument("--screenshots-dir", default="screenshots", help="スクリーンショット保存先 (default: screenshots/)")
+    parser.add_argument("--direction", default="left", choices=["left", "right"], help="ページめくり方向: left=日本語縦書き, right=英語横書き (default: left)")
     parser.add_argument("--skip-ocr", action="store_true", help="スクリーンショットのみ取得 (OCRスキップ)")
     parser.add_argument("--ocr-only", action="store_true", help="既存スクリーンショットからOCRのみ実行")
     args = parser.parse_args()
