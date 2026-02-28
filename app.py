@@ -137,33 +137,38 @@ def activate_window(app_name: str, window_title: str = "") -> None:
     time.sleep(0.5)
 
 
+def _get_frontmost_app() -> str:
+    """現在のフォアグラウンドアプリ名を取得"""
+    script = 'tell application "System Events" to return name of first application process whose frontmost is true'
+    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    return result.stdout.strip()
+
+
 def turn_page_by_key(direction: str = "left", app_name: str = "") -> None:
-    """矢印キーでページめくり。ブラウザは JS 実行でバックグラウンド対応。"""
+    """ページめくり。Chrome 系は一瞬アクティベートしてキー送信後に復帰。"""
     keycode = 123 if direction == "left" else 124
-    if app_name and _is_browser(app_name):
-        # Chrome 系: AppleScript 経由で JavaScript キーイベントを発火（フォーカス不要）
-        js_key = "ArrowLeft" if direction == "left" else "ArrowRight"
-        js_keycode = 37 if direction == "left" else 39
-        js = (
-            f"document.dispatchEvent(new KeyboardEvent('keydown', "
-            f"{{key:'{js_key}', code:'{js_key}', keyCode:{js_keycode}, "
-            f"which:{js_keycode}, bubbles:true}}))"
+    if app_name:
+        # 現在のフォアグラウンドアプリを記録
+        prev_app = _get_frontmost_app()
+        # 対象アプリをアクティベート（キーイベント受信のため）
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{app_name}" to activate'],
+            capture_output=True,
         )
-        script = (
-            f'tell application "{app_name}" to execute '
-            f'front window\'s active tab javascript "{js}"'
-        )
-        subprocess.run(["osascript", "-e", script], capture_output=True)
-    elif app_name:
-        # 非ブラウザ: System Events でプロセス指定キー送信
-        script = f'''
-        tell application "System Events"
-            tell process "{app_name}"
-                key code {keycode}
-            end tell
-        end tell
-        '''
-        subprocess.run(["osascript", "-e", script], capture_output=True)
+        time.sleep(0.15)
+        # CGEvent でキー送信（確実に動作）
+        event_down = CGEventCreateKeyboardEvent(None, keycode, True)
+        event_up = CGEventCreateKeyboardEvent(None, keycode, False)
+        CGEventPost(kCGHIDEventTap, event_down)
+        time.sleep(0.05)
+        CGEventPost(kCGHIDEventTap, event_up)
+        # 元のアプリに復帰
+        if prev_app and prev_app != app_name:
+            time.sleep(0.1)
+            subprocess.run(
+                ["osascript", "-e", f'tell application "{prev_app}" to activate'],
+                capture_output=True,
+            )
     else:
         event_down = CGEventCreateKeyboardEvent(None, keycode, True)
         event_up = CGEventCreateKeyboardEvent(None, keycode, False)
@@ -465,7 +470,7 @@ class App:
 
             # 正しいウィンドウ/タブをアクティベート（Chrome 系はタブ検索付き）
             activate_window(window["owner"], window["name"])
-            self.log_msg("他のアプリに切り替えてもOK（バックグラウンド動作）")
+            self.log_msg("ページめくり時に一瞬フォーカスが切り替わります")
 
             captured = 0
             for i in range(max_pages):
