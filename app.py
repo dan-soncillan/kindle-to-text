@@ -13,12 +13,26 @@ from Quartz import (
     CGWindowListCopyWindowInfo,
     kCGWindowListOptionOnScreenOnly,
     kCGNullWindowID,
+    CGEventCreateMouseEvent,
+    CGEventPost,
+    kCGEventLeftMouseDown,
+    kCGEventLeftMouseUp,
+    kCGHIDEventTap,
 )
 
 
 # ---------------------------------------------------------------------------
 # Core functions
 # ---------------------------------------------------------------------------
+
+def _get_app_window_titles(app_name: str) -> list[str]:
+    """AppleScript でアプリのウィンドウタイトルを取得"""
+    script = f'tell application "{app_name}" to return title of every window'
+    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        return [t.strip() for t in result.stdout.strip().split(", ")]
+    return []
+
 
 def get_visible_windows() -> list[dict]:
     """画面上の可視ウィンドウ一覧を取得"""
@@ -27,7 +41,10 @@ def get_visible_windows() -> list[dict]:
     )
     result = []
     seen = set()
+    owner_index: dict[str, int] = {}  # タイトルなしウィンドウのインデックス追跡
+    title_cache: dict[str, list[str]] = {}  # AppleScript で取得したタイトルキャッシュ
     skip_owners = {"Window Server", "Dock", "SystemUIServer", "Control Center", "Spotlight"}
+
     for w in windows:
         name = w.get("kCGWindowName", "") or ""
         owner = w.get("kCGWindowOwnerName", "") or ""
@@ -37,9 +54,19 @@ def get_visible_windows() -> list[dict]:
         width = int(bounds.get("Width", 0))
         height = int(bounds.get("Height", 0))
 
-        # メインウィンドウ: layer 0, オーナーあり, 最小サイズ以上
         if layer == 0 and owner and owner not in skip_owners and width > 100 and height > 100 and wid not in seen:
             seen.add(wid)
+
+            # タイトルがない場合、AppleScript で取得を試みる
+            if not name:
+                if owner not in title_cache:
+                    title_cache[owner] = _get_app_window_titles(owner)
+                idx = owner_index.get(owner, 0)
+                titles = title_cache[owner]
+                if idx < len(titles):
+                    name = titles[idx]
+                owner_index[owner] = idx + 1
+
             label = f"{owner} — {name}" if name else owner
             result.append({
                 "id": wid,
@@ -59,10 +86,18 @@ def capture_window(window_id: int, output_path: str) -> None:
     )
 
 
+def click_at(x: float, y: float) -> None:
+    """Quartz CGEvent でクリック（pyautogui 不要）"""
+    point = (x, y)
+    event_down = CGEventCreateMouseEvent(None, kCGEventLeftMouseDown, point, 0)
+    event_up = CGEventCreateMouseEvent(None, kCGEventLeftMouseUp, point, 0)
+    CGEventPost(kCGHIDEventTap, event_down)
+    time.sleep(0.05)
+    CGEventPost(kCGHIDEventTap, event_up)
+
+
 def turn_page_by_click(app_name: str, bounds: dict, direction: str = "left") -> None:
     """アプリをアクティベートしてページめくり領域をクリック"""
-    import pyautogui
-
     # アプリを前面に持ってくる
     script = f'tell application "System Events" to set frontmost of process "{app_name}" to true'
     subprocess.run(["osascript", "-e", script], capture_output=True)
@@ -75,13 +110,12 @@ def turn_page_by_click(app_name: str, bounds: dict, direction: str = "left") -> 
     h = int(bounds.get("Height", 800))
 
     if direction == "left":
-        # 左端の7%、縦中央をクリック（Kindle の左ナビ領域）
         click_x = x + int(w * 0.07)
     else:
         click_x = x + int(w * 0.93)
     click_y = y + int(h * 0.5)
 
-    pyautogui.click(click_x, click_y)
+    click_at(click_x, click_y)
 
 
 def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
