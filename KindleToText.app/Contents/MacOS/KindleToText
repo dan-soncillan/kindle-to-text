@@ -1,8 +1,8 @@
 #!/bin/bash
 export PATH="/Users/dan.nagao/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export HOME="/Users/dan.nagao"
+export TCL_LIBRARY="/Users/dan.nagao/.local/share/uv/python/cpython-3.13.12-macos-aarch64-none/lib/tcl9.0"
+export TK_LIBRARY="/Users/dan.nagao/.local/share/uv/python/cpython-3.13.12-macos-aarch64-none/lib/tk9.0"
 
-LOG="/Users/dan.nagao/kindle-to-text/launch.log"
 cd /Users/dan.nagao/kindle-to-text
-
-/Users/dan.nagao/.local/bin/uv run app.py >> "$LOG" 2>&1
+exec /Users/dan.nagao/.local/bin/uv run app.py 2>/tmp/kindle_to_text.log

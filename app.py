@@ -414,6 +414,20 @@ class App:
 
 def main():
     root = tk.Tk()
+
+    # macOS: tkinter が NSApp を作った後にアクティベートして前面に出す
+    try:
+        from AppKit import NSApp
+        NSApp.setActivationPolicy_(0)  # NSApplicationActivationPolicyRegular
+        NSApp.activateIgnoringOtherApps_(True)
+    except ImportError:
+        pass
+
+    root.lift()
+    root.attributes("-topmost", True)
+    root.after(200, lambda: root.attributes("-topmost", False))
+    root.focus_force()
+
     App(root)
     root.mainloop()
 
