@@ -138,10 +138,24 @@ def activate_window(app_name: str, window_title: str = "") -> None:
 
 
 def turn_page_by_key(direction: str = "left", app_name: str = "") -> None:
-    """矢印キーでページめくり。app_name 指定時はバックグラウンドでも動作。"""
+    """矢印キーでページめくり。ブラウザは JS 実行でバックグラウンド対応。"""
     keycode = 123 if direction == "left" else 124
-    if app_name:
-        # AppleScript で特定プロセスにキー送信（フォーカス不要）
+    if app_name and _is_browser(app_name):
+        # Chrome 系: AppleScript 経由で JavaScript キーイベントを発火（フォーカス不要）
+        js_key = "ArrowLeft" if direction == "left" else "ArrowRight"
+        js_keycode = 37 if direction == "left" else 39
+        js = (
+            f"document.dispatchEvent(new KeyboardEvent('keydown', "
+            f"{{key:'{js_key}', code:'{js_key}', keyCode:{js_keycode}, "
+            f"which:{js_keycode}, bubbles:true}}))"
+        )
+        script = (
+            f'tell application "{app_name}" to execute '
+            f'front window\'s active tab javascript "{js}"'
+        )
+        subprocess.run(["osascript", "-e", script], capture_output=True)
+    elif app_name:
+        # 非ブラウザ: System Events でプロセス指定キー送信
         script = f'''
         tell application "System Events"
             tell process "{app_name}"
