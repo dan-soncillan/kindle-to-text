@@ -52,12 +52,12 @@ def capture_window(window_id: int, output_path: str) -> None:
 
 
 def send_key_to_app(app_name: str, key_code: int = 124) -> None:
-    """AppleScript で特定アプリにキーイベント送信（124=右矢印, フォーカス不要）"""
+    """アプリをアクティベートしてキーイベント送信（確実にブラウザに届く）"""
     script = (
         'tell application "System Events"\n'
-        f'  tell process "{app_name}"\n'
-        f"    key code {key_code}\n"
-        "  end tell\n"
+        f'  set frontmost of process "{app_name}" to true\n'
+        f"  delay 0.15\n"
+        f"  key code {key_code}\n"
         "end tell"
     )
     subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
@@ -294,6 +294,10 @@ class App:
     def _capture_worker(self, window: dict):
         try:
             screenshots_dir = Path("screenshots")
+            # 古いスクリーンショットを削除
+            if screenshots_dir.exists():
+                for old in screenshots_dir.glob("page_*.png"):
+                    old.unlink()
             screenshots_dir.mkdir(exist_ok=True)
 
             pages_text = self.pages_var.get().strip()
