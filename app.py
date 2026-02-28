@@ -148,6 +148,12 @@ def ocr_image(image_path: str, languages: list[str] | None = None) -> str:
     request = Vision.VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLanguages_(languages)
     request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+    request.setUsesLanguageCorrection_(True)
+    # revision 3 (macOS 14+): 縦書き日本語の認識精度向上
+    try:
+        request.setRevision_(3)
+    except Exception:
+        pass  # 古い macOS では revision 3 がない
 
     handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
         cg_image, None
