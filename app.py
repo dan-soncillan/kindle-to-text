@@ -14,6 +14,7 @@ from Quartz import (
     kCGWindowListOptionOnScreenOnly,
     kCGNullWindowID,
     CGEventCreateMouseEvent,
+    CGEventCreateKeyboardEvent,
     CGEventPost,
     kCGEventLeftMouseDown,
     kCGEventLeftMouseUp,
@@ -112,20 +113,15 @@ def activate_app(app_name: str) -> None:
     time.sleep(0.5)
 
 
-def turn_page_by_click(bounds: dict, direction: str = "left") -> None:
-    """ページめくり領域をクリック（アプリは既にアクティブ前提）"""
-    x = int(bounds.get("X", 0))
-    y = int(bounds.get("Y", 0))
-    w = int(bounds.get("Width", 1000))
-    h = int(bounds.get("Height", 800))
-
-    if direction == "left":
-        click_x = x + int(w * 0.07)
-    else:
-        click_x = x + int(w * 0.93)
-    click_y = y + int(h * 0.5)
-
-    click_at(click_x, click_y)
+def turn_page_by_key(direction: str = "left") -> None:
+    """CGEvent で矢印キーを送信してページめくり（オーバーレイに影響されない）"""
+    # Left arrow: keycode 123, Right arrow: keycode 124
+    keycode = 123 if direction == "left" else 124
+    event_down = CGEventCreateKeyboardEvent(None, keycode, True)
+    event_up = CGEventCreateKeyboardEvent(None, keycode, False)
+    CGEventPost(kCGHIDEventTap, event_down)
+    time.sleep(0.05)
+    CGEventPost(kCGHIDEventTap, event_up)
 
 
 def ocr_image(image_path: str, languages: list[str] | None = None, invert: bool = False) -> str:
@@ -491,7 +487,7 @@ class App:
                     self.set_progress((captured / max_pages) * 50)
 
                 if i < max_pages - 1:
-                    turn_page_by_click(window["bounds"], direction)
+                    turn_page_by_key(direction)
                     time.sleep(delay)
 
             self.log_msg(f"\nスクリーンショット完了: {captured} ページ")
